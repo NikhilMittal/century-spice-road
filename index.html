@@ -143,6 +143,22 @@ svg.coin{width:22px;height:22px;vertical-align:middle;display:inline-block}
 .score th,.score td{padding:6px 8px;text-align:right;border-bottom:1px solid #D4BE92}
 .score th:first-child,.score td:first-child{text-align:left}
 .score tr.win td{color:#8A4A12;font-weight:700}
+
+/* ---------- online ---------- */
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--gold3);border-radius:99px;padding:5px 12px;font-size:13px;letter-spacing:.06em;color:var(--gold2);background:rgba(0,0,0,.25);align-self:center}
+.chip b{font-family:Cinzel,serif;letter-spacing:.2em}
+.tag.off{color:#A72A1E;border-color:#A72A1E}
+.menu{display:grid;gap:10px;margin:12px 0 4px}
+.mopt{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;border:1px solid var(--parch-line);background:#FBF3E0;border-radius:8px;padding:12px 14px;color:var(--parch-ink)}
+.mopt:hover{border-color:var(--gold3);background:#FFF8E6}
+.mopt b{font-family:Marcellus,serif;font-size:18px;color:#6B4410}
+.mopt span{color:var(--parch-muted);font-size:14px}
+.lbl{display:block;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--parch-muted);margin:10px 0 4px}
+.lrows{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.lrow{display:grid;grid-template-columns:24px 1fr auto;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--parch-line);border-radius:6px;background:#FBF3E0}
+.lobby a{color:#8A4A12;word-break:break-all}
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:#2B1B12;color:var(--ink);border:1px solid var(--gold3);border-radius:8px;padding:10px 16px;font-size:14px;opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;z-index:30;max-width:90vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media (max-width:520px){:root{--cw:100px}.brand h1{font-size:24px}}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
@@ -158,6 +174,7 @@ svg.coin{width:22px;height:22px;vertical-align:middle;display:inline-block}
     <div class="sub">Caravans · Merchants · Points — a table for 2–5</div>
   </div>
   <div class="topbtns">
+    <span id="roomchip"></span>
     <button class="btn" id="btnRules">How to play</button>
     <button class="btn primary" id="btnNew">New game</button>
   </div>
@@ -166,6 +183,7 @@ svg.coin{width:22px;height:22px;vertical-align:middle;display:inline-block}
 <div class="table" id="app"></div>
 <div id="modals"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js"></script>
 <script>
 /* ================================================================
    DATA — verified against the official 2024 Plan B Games rulebook,
@@ -398,29 +416,40 @@ const bowlSVG=k=>`<svg viewBox="0 0 44 34"><ellipse cx="22" cy="28" rx="19" ry="
 
 /* ================================================================
    STATE
+   S is the authoritative game state. In hot-seat play it lives here;
+   in online play it lives on the host and guests receive copies.
+   UI holds this device's in-progress selection (never shared).
    ================================================================ */
 let S=null;let UI={mode:'idle'};
+const NET={mode:'local',role:null,peer:null,host:null,conns:new Map(),code:null,myId:'local',mySeat:null,lobby:null,name:''};
 const START_CUBES=[[3,0,0,0],[4,0,0,0],[4,0,0,0],[3,1,0,0],[3,1,0,0]];
-function newGame(cfg){
+function makeGame(cfg){
   const n=cfg.players.length;
-  S={players:cfg.players.map((p,i)=>({name:p.name,ai:p.ai,hand:[Object.assign(mkGain([2,0,0,0]),{id:'s'+i+'a',starter:true}),Object.assign(mkUp(2),{id:'s'+i+'b',starter:true})],played:[],caravan:START_CUBES[i].slice(),points:[],gold:0,silver:0})),
-    mdeck:buildMerchantDeck(),market:[],pdeck:buildPointDeck(),pmarket:[],gold:n*2,silver:n*2,cur:0,endTriggered:false,over:false,target:n<=3?6:5,turn:1,log:[],round:1};
-  for(let i=0;i<6;i++)S.market.push({card:S.mdeck.pop(),cubes:[0,0,0,0]});
-  for(let i=0;i<5;i++)S.pmarket.push(S.pdeck.pop());
-  UI={mode:'idle'};
-  log(`New game — ${n} players. The game ends the round someone claims their ${S.target}th point card.`);
-  log(`<b>${S.players[0].name}</b> is first player.`);
-  save();render();maybeAI();
+  const G={players:cfg.players.map((p,i)=>({name:p.name,ai:!!p.ai,owner:p.ai?'bot':(p.owner||'local'),online:p.ai?true:(p.online!==false),
+      hand:[Object.assign(mkGain([2,0,0,0]),{id:'s'+i+'a',starter:true}),Object.assign(mkUp(2),{id:'s'+i+'b',starter:true})],played:[],caravan:START_CUBES[i].slice(),points:[],gold:0,silver:0})),
+    mdeck:buildMerchantDeck(),market:[],pdeck:buildPointDeck(),pmarket:[],gold:n*2,silver:n*2,cur:0,phase:'play',endTriggered:false,over:false,target:n<=3?6:5,turn:1,log:[],round:1,online:cfg.online||false};
+  for(let i=0;i<6;i++)G.market.push({card:G.mdeck.pop(),cubes:[0,0,0,0]});
+  for(let i=0;i<5;i++)G.pmarket.push(G.pdeck.pop());
+  return G;
 }
+function newGame(cfg){
+  S=makeGame(cfg);UI={mode:'idle'};
+  log(`New game — ${S.players.length} players. The game ends the round someone claims their ${S.target}th point card.`);
+  log(`<b>${S.players[0].name}</b> is first player.`);
+  afterChange();
+}
+function afterChange(){save();render();broadcastState();maybeAI()}
 function log(t){S.log.unshift(t);if(S.log.length>120)S.log.length=120}
 const cur=()=>S.players[S.cur];
 const total=c=>c.reduce((a,b)=>a+b,0);
 const value=c=>c.reduce((a,b,i)=>a+b*VAL[i],0);
 const canAfford=(c,cost)=>cost.every((x,i)=>c[i]>=x);
 const tradeMax=(c,card)=>Math.min(...card.inp.map((x,i)=>x?Math.floor(c[i]/x):99));
+const controls=p=>!p.ai&&(NET.mode==='local'||p.owner===NET.myId);
+const viewSeat=()=>NET.mode==='online'&&NET.mySeat!=null?NET.mySeat:S.cur;
 
 /* ================================================================
-   ACTIONS
+   ACTIONS — mutate S only; callers run afterChange()
    ================================================================ */
 function doPlaySpice(p,card){card.gain.forEach((x,i)=>p.caravan[i]+=x);moveToPlayed(p,card);log(`<b>${p.name}</b> played ${cubesTxt(card.gain)}.`)}
 function doPlayTrade(p,card,times){card.inp.forEach((x,i)=>p.caravan[i]-=x*times);card.out.forEach((x,i)=>p.caravan[i]+=x*times);moveToPlayed(p,card);
@@ -443,58 +472,174 @@ function doClaim(p,idx){
   log(`<b>${p.name}</b> claimed a <b>${pc.pts}</b>-point card${c?` and a ${c} coin`:''}. (${p.points.length}/${S.target})`);
   if(p.points.length>=S.target&&!S.endTriggered){S.endTriggered=true;log(`<b>Final round!</b> ${p.name} has ${p.points.length} point cards — play continues to the end of this round.`)}
 }
-function endTurn(){const p=cur();if(total(p.caravan)>10){if(p.ai){trimTo10(p.caravan);log(`<b>${p.name}</b> discarded down to 10 cubes.`)}else{UI={mode:'discard'};save();render();return}}advance()}
+function endTurn(){const p=cur();if(total(p.caravan)>10){if(p.ai){trimTo10(p.caravan);log(`<b>${p.name}</b> discarded down to 10 cubes.`)}else{S.phase='discard';return}}advance()}
 function trimTo10(c){let over=total(c)-10;for(let i=0;i<4&&over>0;i++){const d=Math.min(c[i],over);c[i]-=d;over-=d}}
-function advance(){UI={mode:'idle'};const next=(S.cur+1)%S.players.length;
-  if(next===0){if(S.endTriggered){S.over=true;finish();save();render();return}S.round++}
-  S.cur=next;S.turn++;save();render();maybeAI()}
+function advance(){S.phase='play';const next=(S.cur+1)%S.players.length;
+  if(next===0){if(S.endTriggered){S.over=true;finish();return}S.round++}
+  S.cur=next;S.turn++}
 function score(p){return p.points.reduce((a,c)=>a+c.pts,0)+p.gold*3+p.silver+p.caravan[1]+p.caravan[2]+p.caravan[3]}
 function finish(){const ranked=S.players.map((p,i)=>({p,i,s:score(p)})).sort((a,b)=>b.s-a.s||b.i-a.i);S.winner=ranked[0].i;log(`<b>Game over.</b> ${ranked[0].p.name} wins with ${ranked[0].s} points.`)}
 
+// One entry point for every move, human or bot, local or remote. Returns an error string or null.
+function applyAction(seat,a){
+  if(!S||S.over)return 'The game is over.';
+  if(S.cur!==seat)return 'Not your turn.';
+  const p=S.players[seat];if(!a||typeof a!=='object')return 'Bad action.';
+  if(S.phase==='discard'){
+    if(a.k!=='discard')return 'Return cubes down to 10 first.';
+    const i=a.i|0;if(i<0||i>3||p.caravan[i]<1)return 'No such cube.';
+    p.caravan[i]--;log(`<b>${p.name}</b> returned a ${SPNAME[SP[i]]} cube.`);
+    if(total(p.caravan)<=10)advance();return null;
+  }
+  const card=a.id?p.hand.find(c=>c.id===a.id):null;
+  switch(a.k){
+    case 'spice':if(!card||card.type!=='spice')return 'Card not in hand.';doPlaySpice(p,card);break;
+    case 'trade':{if(!card||card.type!=='trade')return 'Card not in hand.';const t=a.times|0;if(t<1||t>tradeMax(p.caravan,card))return 'Not enough cubes for that trade.';doPlayTrade(p,card,t);break}
+    case 'upgrade':{if(!card||card.type!=='upgrade')return 'Card not in hand.';const ups=Array.isArray(a.ups)?a.ups.map(x=>x|0):[];if(ups.length>card.n)return 'Too many upgrades.';
+      const w=p.caravan.slice();for(const i of ups){if(i<0||i>2||w[i]<1)return 'Invalid upgrade.';w[i]--;w[i+1]++}doPlayUpgrade(p,card,ups);break}
+    case 'acquire':{const idx=a.idx|0;if(idx<0||idx>=S.market.length)return 'No such card.';if(idx>total(p.caravan))return 'Not enough cubes to reach that card.';
+      const pay=Array.isArray(a.pay)?a.pay.map(x=>x|0):[];if(pay.length!==idx)return 'Choose one cube per card to the left.';
+      const w=p.caravan.slice();for(const i of pay){if(i<0||i>3||w[i]<1)return 'You do not have those cubes.';w[i]--}doAcquire(p,idx,pay);break}
+    case 'claim':{const idx=a.idx|0;if(idx<0||idx>=S.pmarket.length)return 'No such card.';if(!canAfford(p.caravan,S.pmarket[idx].cost))return 'You cannot afford that card.';doClaim(p,idx);break}
+    case 'rest':doRest(p);break;
+    default:return 'Unknown action.';
+  }
+  endTurn();return null;
+}
+function dispatch(a){
+  UI={mode:'idle'};
+  if(NET.role==='guest'){if(NET.host&&NET.host.open)NET.host.send({t:'act',a});else toast('Not connected to the host.');render();return}
+  const err=applyAction(viewSeat(),a);if(err)toast(err);afterChange();
+}
+
 /* ================================================================
-   AI
+   AI (runs on the host / local device only)
    ================================================================ */
 function evalCaravan(c){let best=0,close=0;
   for(const pc of S.pmarket){if(canAfford(c,pc.cost))best=Math.max(best,pc.pts);else{const short=pc.cost.reduce((a,x,i)=>a+Math.max(0,x-c[i])*VAL[i],0);close=Math.max(close,pc.pts*Math.max(0,1-short/value(pc.cost))*0.5)}}
   return value(c)+best*1.2+close}
 function aiPlan(p){const opts=[];const base=evalCaravan(p.caravan);
-  S.pmarket.forEach((pc,idx)=>{if(canAfford(p.caravan,pc.cost)){const coin=coinForSlot(idx);const cv=coin==='gold'?3:coin==='silver'?1:0;const left=p.caravan.map((x,i)=>x-pc.cost[i]);opts.push({kind:'claim',idx,score:pc.pts+cv+value(left)*0.35+(S.endTriggered?6:0)+8})}});
+  S.pmarket.forEach((pc,idx)=>{if(canAfford(p.caravan,pc.cost)){const coin=coinForSlot(idx);const cv=coin==='gold'?3:coin==='silver'?1:0;const left=p.caravan.map((x,i)=>x-pc.cost[i]);opts.push({k:'claim',idx,score:pc.pts+cv+value(left)*0.35+(S.endTriggered?6:0)+8})}});
   p.hand.forEach(card=>{
-    if(card.type==='spice'){const c=p.caravan.map((x,i)=>x+card.gain[i]);trimTo10(c);opts.push({kind:'play',card,score:evalCaravan(c)-base+2})}
-    else if(card.type==='trade'){const m=tradeMax(p.caravan,card);let bt=0,bs=-1e9;for(let t=1;t<=m;t++){const c=p.caravan.map((x,i)=>x-card.inp[i]*t+card.out[i]*t);trimTo10(c);const s=evalCaravan(c)-base;if(s>bs){bs=s;bt=t}}if(m>0)opts.push({kind:'play',card,times:bt,score:bs+2})}
-    else{let best=null;const rec=(c,left,seq)=>{const s=evalCaravan(c)-base;if(!best||s>best.s)best={s,seq:seq.slice()};if(!left)return;for(let i=0;i<3;i++)if(c[i]>0){c[i]--;c[i+1]++;seq.push(i);rec(c,left-1,seq);seq.pop();c[i]++;c[i+1]--}};rec(p.caravan.slice(),card.n,[]);if(best&&best.seq.length)opts.push({kind:'play',card,ups:best.seq,score:best.s+2})}
+    if(card.type==='spice'){const c=p.caravan.map((x,i)=>x+card.gain[i]);trimTo10(c);opts.push({k:'spice',id:card.id,score:evalCaravan(c)-base+2})}
+    else if(card.type==='trade'){const m=tradeMax(p.caravan,card);let bt=0,bs=-1e9;for(let t=1;t<=m;t++){const c=p.caravan.map((x,i)=>x-card.inp[i]*t+card.out[i]*t);trimTo10(c);const s=evalCaravan(c)-base;if(s>bs){bs=s;bt=t}}if(m>0)opts.push({k:'trade',id:card.id,times:bt,score:bs+2})}
+    else{let best=null;const rec=(c,left,seq)=>{const s=evalCaravan(c)-base;if(!best||s>best.s)best={s,seq:seq.slice()};if(!left)return;for(let i=0;i<3;i++)if(c[i]>0){c[i]--;c[i+1]++;seq.push(i);rec(c,left-1,seq);seq.pop();c[i]++;c[i+1]--}};rec(p.caravan.slice(),card.n,[]);if(best&&best.seq.length)opts.push({k:'upgrade',id:card.id,ups:best.seq,score:best.s+2})}
   });
   const cubesN=total(p.caravan);
   S.market.forEach((slot,idx)=>{if(idx>cubesN)return;const card=slot.card;let worth=0;
     if(card.type==='spice')worth=value(card.gain)+1;else if(card.type==='trade')worth=(value(card.out)-value(card.inp))*Math.max(1,Math.floor(10/Math.max(1,total(card.out))))+1;else worth=card.n*2;
     const pay=cheapest(p.caravan,idx);const cost=pay.reduce((a,i)=>a+VAL[i],0);const handPenalty=Math.max(0,p.hand.length+p.played.length-7)*2;
-    opts.push({kind:'acquire',idx,pay,score:worth+value(slot.cubes)-cost*1.1-handPenalty+(S.round<3?2:0)-(S.endTriggered?8:0)})});
-  opts.push({kind:'rest',score:p.played.length*2.2-(p.hand.length?1.5:0)+(p.hand.length===0?10:0)});
+    opts.push({k:'acquire',idx,pay,score:worth+value(slot.cubes)-cost*1.1-handPenalty+(S.round<3?2:0)-(S.endTriggered?8:0)})});
+  opts.push({k:'rest',score:p.played.length*2.2-(p.hand.length?1.5:0)+(p.hand.length===0?10:0)});
   opts.sort((a,b)=>b.score-a.score);return opts[0]}
 function cheapest(c,n){const out=[];const cc=c.slice();for(let k=0;k<n;k++){for(let i=0;i<4;i++)if(cc[i]>0){cc[i]--;out.push(i);break}}return out}
-function maybeAI(){if(!S||S.over)return;const p=cur();if(!p.ai)return;
-  setTimeout(()=>{if(!S||S.over||cur()!==p)return;const a=aiPlan(p);
-    if(a.kind==='claim')doClaim(p,a.idx);else if(a.kind==='play'){if(a.card.type==='spice')doPlaySpice(p,a.card);else if(a.card.type==='trade')doPlayTrade(p,a.card,a.times);else doPlayUpgrade(p,a.card,a.ups)}else if(a.kind==='acquire')doAcquire(p,a.idx,a.pay);else doRest(p);
-    endTurn()},S.players.every(x=>x.ai)?500:900)}
+let aiTimer=null;
+function maybeAI(){if(!S||S.over||NET.role==='guest')return;const p=cur();if(!p.ai)return;
+  clearTimeout(aiTimer);const seat=S.cur,game=S;
+  aiTimer=setTimeout(()=>{if(S!==game||S.over||S.cur!==seat||!cur().ai)return;const a=aiPlan(p);const err=applyAction(seat,a);if(err){console.warn('bot move rejected',err,a);doRest(p);endTurn()}afterChange()},S.players.every(x=>x.ai)?500:900)}
 
 /* ================================================================
-   HUMAN INTERACTION
+   HUMAN INTERACTION (this device's seat)
    ================================================================ */
-function onHandCard(card){const p=cur();if(p.ai||UI.mode!=='idle'||S.over)return;
-  if(card.type==='spice'){doPlaySpice(p,card);endTurn();return}
-  if(card.type==='trade'){const m=tradeMax(p.caravan,card);if(m<1)return;if(m===1){doPlayTrade(p,card,1);endTurn();return}UI={mode:'trade',card,max:m};render();return}
+function myTurn(){const s=viewSeat();return !S.over&&S.cur===s&&controls(S.players[s])}
+function onHandCard(card){if(!myTurn()||S.phase!=='play'||UI.mode!=='idle')return;const p=cur();
+  if(card.type==='spice'){dispatch({k:'spice',id:card.id});return}
+  if(card.type==='trade'){const m=tradeMax(p.caravan,card);if(m<1)return;if(m===1){dispatch({k:'trade',id:card.id,times:1});return}UI={mode:'trade',card,max:m};render();return}
   if(card.type==='upgrade'){if(p.caravan[0]+p.caravan[1]+p.caravan[2]<1)return;UI={mode:'upgrade',card,left:card.n,ups:[],work:p.caravan.slice()};render()}}
-function onMarketCard(idx){const p=cur();if(p.ai||UI.mode!=='idle'||S.over)return;if(idx>total(p.caravan))return;
-  if(idx===0){doAcquire(p,0,[]);endTurn();return}UI={mode:'pay',idx,pay:cheapest(p.caravan,idx)};render()}
-function onPointCard(idx){const p=cur();if(p.ai||UI.mode!=='idle'||S.over)return;if(!canAfford(p.caravan,S.pmarket[idx].cost))return;doClaim(p,idx);endTurn()}
-function onRest(){const p=cur();if(p.ai||UI.mode!=='idle'||S.over)return;doRest(p);endTurn()}
-function onCube(i){const p=cur();
-  if(UI.mode==='discard'){p.caravan[i]--;log(`<b>${p.name}</b> returned a ${SPNAME[SP[i]]} cube.`);if(total(p.caravan)<=10){advance()}else{save();render()}return}
+function onMarketCard(idx){if(!myTurn()||S.phase!=='play'||UI.mode!=='idle')return;const p=cur();if(idx>total(p.caravan))return;
+  if(idx===0){dispatch({k:'acquire',idx:0,pay:[]});return}UI={mode:'pay',idx,pay:cheapest(p.caravan,idx)};render()}
+function onPointCard(idx){if(!myTurn()||S.phase!=='play'||UI.mode!=='idle')return;if(!canAfford(cur().caravan,S.pmarket[idx].cost))return;dispatch({k:'claim',idx})}
+function onRest(){if(!myTurn()||S.phase!=='play'||UI.mode!=='idle')return;dispatch({k:'rest'})}
+function onCube(i){if(!myTurn())return;const p=cur();
+  if(S.phase==='discard'){dispatch({k:'discard',i});return}
   if(UI.mode==='upgrade'){if(i>2||UI.left<1||UI.work[i]<1)return;UI.work[i]--;UI.work[i+1]++;UI.ups.push(i);UI.left--;render();return}
   if(UI.mode==='pay'){if(UI.pay.length>=UI.idx)return;const used=UI.pay.filter(x=>x===i).length;if(p.caravan[i]-used<1)return;UI.pay.push(i);render();return}}
 function cancelUI(){UI={mode:'idle'};render()}
-function confirmUI(){const p=cur();if(UI.mode==='upgrade'){doPlayUpgrade(p,UI.card,UI.ups);endTurn()}else if(UI.mode==='pay'){if(UI.pay.length!==UI.idx)return;doAcquire(p,UI.idx,UI.pay);endTurn()}}
+function confirmUI(){if(UI.mode==='upgrade')dispatch({k:'upgrade',id:UI.card.id,ups:UI.ups});else if(UI.mode==='pay'){if(UI.pay.length!==UI.idx)return;dispatch({k:'acquire',idx:UI.idx,pay:UI.pay})}}
 function undoUpgrade(){if(UI.mode!=='upgrade'||!UI.ups.length)return;const i=UI.ups.pop();UI.work[i]++;UI.work[i+1]--;UI.left++;render()}
+
+/* ================================================================
+   NETWORK — WebRTC data channels via PeerJS; the host is authoritative
+   ================================================================ */
+const ROOM_PREFIX='csr-v1-';
+const CODE_CHARS='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const genCode=()=>Array.from({length:5},()=>CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');
+const cleanName=s=>String(s||'').replace(/[<>]/g,'').trim().slice(0,18)||'Trader';
+function netReset(){try{NET.peer&&NET.peer.destroy()}catch(e){}NET.mode='local';NET.role=null;NET.peer=null;NET.host=null;NET.conns=new Map();NET.code=null;NET.myId='local';NET.mySeat=null;NET.lobby=null;renderHeader()}
+function peerAvailable(){return typeof window.Peer==='function'}
+function hostGame(name,attempt=0){
+  netReset();NET.mode='online';NET.role='host';NET.myId='host';NET.name=name;NET.code=genCode();
+  NET.lobby=[{name,owner:'host',ai:false,online:true}];
+  const peer=new Peer(ROOM_PREFIX+NET.code);NET.peer=peer;
+  showLobby('Opening room…');
+  peer.on('open',()=>{showLobby();renderHeader()});
+  peer.on('error',e=>{if(e.type==='unavailable-id'&&attempt<3)return hostGame(name,attempt+1);netError(e)});
+  peer.on('connection',conn=>{
+    conn.on('data',m=>onHostMsg(conn,m));
+    conn.on('close',()=>onGuestLeft(conn));conn.on('error',()=>onGuestLeft(conn));
+  });
+}
+function onHostMsg(conn,m){
+  if(!m||typeof m!=='object')return;
+  if(m.t==='hello'){
+    const name=cleanName(m.name);
+    if(S&&S.online){ // game in progress: allow a dropped player to reclaim their seat by name
+      const seat=S.players.findIndex(p=>!p.ai&&p.owner!=='host'&&!p.online&&p.name===name);
+      if(seat<0){conn.send({t:'err',msg:'That game is already in progress.',fatal:true});return}
+      S.players[seat].owner=conn.peer;S.players[seat].online=true;NET.conns.set(conn.peer,conn);log(`<b>${name}</b> reconnected.`);afterChange();return;
+    }
+    if(NET.lobby.length>=5){conn.send({t:'err',msg:'The room is full (5 seats).',fatal:true});return}
+    NET.conns.set(conn.peer,conn);
+    let n=name,k=2;while(NET.lobby.some(x=>x.name===n))n=name+' '+(k++);
+    NET.lobby.push({name:n,owner:conn.peer,ai:false,online:true});broadcastLobby();showLobby();
+  }else if(m.t==='act'){
+    if(!S)return;const seat=S.players.findIndex(p=>p.owner===conn.peer);if(seat<0)return;
+    const err=applyAction(seat,m.a);if(err){conn.send({t:'err',msg:err});return}afterChange();
+  }
+}
+function onGuestLeft(conn){
+  if(NET.role!=='host')return;NET.conns.delete(conn.peer);
+  if(S&&S.online){const p=S.players.find(x=>x.owner===conn.peer);if(p&&p.online){p.online=false;log(`<b>${p.name}</b> lost connection — they can rejoin with the same name, or you can hand their seat to a bot.`);afterChange()}}
+  else if(NET.lobby){NET.lobby=NET.lobby.filter(x=>x.owner!==conn.peer);broadcastLobby();showLobby()}
+}
+function broadcastLobby(){if(NET.role!=='host')return;const msg={t:'lobby',code:NET.code,players:NET.lobby.map(x=>({name:x.name,ai:x.ai,host:x.owner==='host'}))};NET.conns.forEach(c=>{if(c.open)c.send(msg)})}
+function broadcastState(){if(NET.role!=='host'||!S||!S.online)return;NET.conns.forEach((c,id)=>{if(!c.open)return;const seat=S.players.findIndex(p=>p.owner===id);if(seat>=0)c.send({t:'state',S,seat})})}
+function hostStart(){
+  if(NET.lobby.length<2){toast('Need at least 2 players.');return}
+  closeModal();newGame({players:NET.lobby.map(x=>({name:x.name,ai:x.ai,owner:x.owner})),online:true});NET.mySeat=S.players.findIndex(p=>p.owner==='host');render();
+}
+function joinGame(code,name){
+  netReset();NET.mode='online';NET.role='guest';NET.name=name;NET.code=code;
+  const peer=new Peer();NET.peer=peer;showLobby('Connecting…');
+  peer.on('open',id=>{NET.myId=id;const conn=peer.connect(ROOM_PREFIX+code,{serialization:'json',reliable:true});NET.host=conn;
+    conn.on('open',()=>{conn.send({t:'hello',name});renderHeader()});
+    conn.on('data',onGuestMsg);
+    conn.on('close',()=>{if(NET.role==='guest')disconnected()});conn.on('error',()=>{if(NET.role==='guest')disconnected()});
+  });
+  peer.on('error',e=>{if(e.type==='peer-unavailable')netError({message:`No room “${code}” was found. Check the code — the host must have the game open.`});else netError(e)});
+}
+function onGuestMsg(m){
+  if(!m||typeof m!=='object')return;
+  if(m.t==='lobby'){NET.lobby=m.players;NET.code=m.code;showLobby()}
+  else if(m.t==='state'){const turnChanged=!S||S.turn!==m.S.turn||S.phase!==m.S.phase;S=m.S;NET.mySeat=m.seat;if(turnChanged)UI={mode:'idle'};if($('#modals .lobby'))closeModal();render()}
+  else if(m.t==='err'){toast(m.msg);if(m.fatal){netReset();showMenu()}}
+}
+function disconnected(){
+  $('#modals').innerHTML=`<div class="overlay"><div class="modal"><h2>Connection lost</h2><p>The link to the host dropped. If the host still has the game open, you can rejoin room <b>${esc(NET.code)}</b> as <b>${esc(NET.name)}</b> and pick up your seat.</p>
+  <div class="foot"><button class="btn" id="mLeave">Leave</button><button class="btn primary" id="mRejoin">Rejoin</button></div></div></div>`;
+  $('#mLeave').onclick=()=>{netReset();closeModal();showMenu()};$('#mRejoin').onclick=()=>joinGame(NET.code,NET.name);
+}
+function netError(e){
+  const hosted=location.hostname.endsWith('claude.ai')||location.protocol==='file:';
+  const msg=hosted?'Online play needs the standalone site — open <a href="https://nikhilmittal.github.io/century-spice-road/">nikhilmittal.github.io/century-spice-road</a> and host from there.':(e&&e.message?esc(e.message):'The connection service could not be reached.');
+  netReset();
+  $('#modals').innerHTML=`<div class="overlay"><div class="modal"><h2>Could not connect</h2><p>${msg}</p><div class="foot"><button class="btn primary" id="mClose">Back</button></div></div></div>`;
+  $('#mClose').onclick=()=>{closeModal();showMenu()};
+}
+let toastTimer=null;
+function toast(msg){let t=$('#toast');if(!t){t=document.createElement('div');t.id='toast';document.body.appendChild(t)}t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2800)}
+function renderHeader(){const el=$('#roomchip');if(!el)return;
+  if(NET.mode==='online'&&NET.code)el.innerHTML=`<span class="chip">Room <b>${esc(NET.code)}</b> · ${NET.role==='host'?'hosting':'guest'}</span>`;else el.innerHTML=''}
 
 /* ================================================================
    RENDER
@@ -504,44 +649,48 @@ function cubesTxt(arr){return arr.map((n,i)=>n?`${n} ${SPNAME[SP[i]]}`:'').filte
 function cardTxt(c){return c.type==='spice'?`a spice card (${cubesTxt(c.gain)})`:c.type==='trade'?`a trade card (${cubesTxt(c.inp)} → ${cubesTxt(c.out)})`:`the Upgrade ${c.n} card`}
 function pileHTML(gold,n){if(n<=0)return '';const k=Math.min(n,4);let h='<span class="pile">';for(let i=0;i<k;i++)h+=`<svg viewBox="0 0 100 100" style="top:${(k-1-i)*2.5}px;left:${i*1.2}px"><use href="#coin${gold?'G':'S'}"/></svg>`;return h+`</span><span class="num">×${n}</span>`}
 function render(){
-  if(!S)return;
-  const p=cur(),me=!p.ai&&!S.over;
+  renderHeader();
+  if(!S){$('#app').innerHTML='';return}
+  const vs=viewSeat(),p=S.players[vs],turnP=cur();
+  const me=myTurn()&&S.phase==='play',idle=me&&UI.mode==='idle';
   const goldSlot=S.gold>0?0:-1,silverSlot=S.gold>0?1:0;
   const pm=S.pmarket.map((pc,idx)=>{
     const coins=(idx===goldSlot?pileHTML(true,S.gold):'')+(idx===silverSlot?pileHTML(false,S.silver):'');
-    const ok=me&&UI.mode==='idle'&&canAfford(p.caravan,pc.cost);
-    return `<div class="slot"><div class="coins">${coins}</div><button class="card ${ok?'clickable':(me&&UI.mode==='idle'?'dim':'')}" ${ok?`data-pt="${idx}" title="Claim this card"`:'disabled'}>${pointFace(pc)}</button></div>`}).join('');
+    const ok=idle&&canAfford(p.caravan,pc.cost);
+    return `<div class="slot"><div class="coins">${coins}</div><button class="card ${ok?'clickable':(idle?'dim':'')}" ${ok?`data-pt="${idx}" title="Claim this card"`:'disabled'}>${pointFace(pc)}</button></div>`}).join('');
   const mm=S.market.map((slot,idx)=>{
-    const ok=me&&UI.mode==='idle'&&idx<=total(p.caravan);
-    return `<div class="slot"><div class="coins"><span class="free">${idx===0?'FREE':`${idx} CUBE${idx>1?'S':''}`}</span></div><button class="card ${ok?'clickable':(me&&UI.mode==='idle'?'dim':'')}" ${ok?`data-mk="${idx}" title="Acquire this card"`:'disabled'}>${merchantFace(slot.card)}${total(slot.cubes)?`<span class="tip">${cubesHTML(slot.cubes)}</span>`:''}</button></div>`}).join('');
+    const ok=idle&&idx<=total(p.caravan);
+    return `<div class="slot"><div class="coins"><span class="free">${idx===0?'FREE':`${idx} CUBE${idx>1?'S':''}`}</span></div><button class="card ${ok?'clickable':(idle?'dim':'')}" ${ok?`data-mk="${idx}" title="Acquire this card"`:'disabled'}>${merchantFace(slot.card)}${total(slot.cubes)?`<span class="tip">${cubesHTML(slot.cubes)}</span>`:''}</button></div>`}).join('');
   const others=S.players.map((q,i)=>`<div class="pl ${i===S.cur?'active':''}">
-      <div class="name"><span>${esc(q.name)} ${q.ai?'<span class="tag">bot</span>':''}</span><small>${q.points.length}/${S.target} cards · ${score(q)} pts</small></div>
+      <div class="name"><span>${esc(q.name)} ${q.ai?'<span class="tag">bot</span>':''}${S.online&&i===vs?'<span class="tag">you</span>':''}${S.online&&!q.ai&&!q.online?'<span class="tag off">offline</span>':''}</span><small>${q.points.length}/${S.target} cards · ${score(q)} pts</small></div>
       <div class="minicaravan">${cubesHTML(q.caravan)||'<span style="font-size:12px;color:var(--parch-muted)">empty caravan</span>'}</div>
-      <div class="meta"><span>hand ${q.hand.length}</span><span>played ${q.played.length}</span><span>${coin(true)} ${q.gold}</span><span>${coin(false)} ${q.silver}</span></div></div>`).join('');
+      <div class="meta"><span>hand ${q.hand.length}</span><span>played ${q.played.length}</span><span>${coin(true)} ${q.gold}</span><span>${coin(false)} ${q.silver}</span>${S.online&&NET.role==='host'&&!q.ai&&!q.online?`<button class="btn small" data-botify="${i}">Hand seat to a bot</button>`:''}</div></div>`).join('');
 
   const shownCaravan=UI.mode==='upgrade'?UI.work:p.caravan;
   let slots='';const cnt=total(shownCaravan);let k=0;
+  const discarding=myTurn()&&S.phase==='discard';
   shownCaravan.forEach((c,i)=>{const usedInPay=UI.mode==='pay'?UI.pay.filter(x=>x===i).length:0;
     for(let j=0;j<c;j++,k++){const inPay=UI.mode==='pay'&&j<usedInPay;
-      const clickable=me&&((UI.mode==='discard')||(UI.mode==='upgrade'&&i<3&&UI.left>0)||(UI.mode==='pay'&&!inPay&&UI.pay.length<UI.idx));
+      const clickable=discarding||(me&&((UI.mode==='upgrade'&&i<3&&UI.left>0)||(UI.mode==='pay'&&!inPay&&UI.pay.length<UI.idx)));
       slots+=`<div class="cslot ${k>=10?'over':''}"><button class="cubebtn ${inPay?'sel':''}" ${clickable?`data-cube="${i}"`:'disabled'} title="${SPNAME[SP[i]]}">${cube(SP[i],'lg')}</button></div>`}});
   for(;k<10;k++)slots+='<div class="cslot"></div>';
-  const hand=p.hand.map(c=>{let ok=me&&UI.mode==='idle';let why='';
+  const hand=p.hand.map(c=>{let ok=idle;let why='';
     if(c.type==='trade'&&tradeMax(p.caravan,c)<1){ok=false;why='Not enough cubes'}
     if(c.type==='upgrade'&&p.caravan[0]+p.caravan[1]+p.caravan[2]<1){ok=false;why='Nothing to upgrade'}
-    return `<button class="card ${ok?'clickable':(me&&UI.mode==='idle'?'dim':'')}" ${ok?`data-hand="${c.id}" title="Play this card"`:`disabled title="${why}"`}>${merchantFace(c,c.starter)}${c.type==='trade'&&me?`<span class="tip">×${tradeMax(p.caravan,c)} max</span>`:''}</button>`}).join('')
+    return `<button class="card ${ok?'clickable':(idle?'dim':'')}" ${ok?`data-hand="${c.id}" title="Play this card"`:`disabled title="${why}"`}>${merchantFace(c,c.starter)}${c.type==='trade'&&me?`<span class="tip">×${tradeMax(p.caravan,c)} max</span>`:''}</button>`}).join('')
     ||'<div style="color:var(--muted);padding:8px 4px">No cards in hand — rest to take your played cards back.</div>';
   const played=p.played.map(c=>`<span class="card">${merchantFace(c,c.starter)}</span>`).join('')||'<div style="color:var(--muted);padding:6px 4px;font-size:14px">Nothing played yet this cycle.</div>';
 
   let prompt='';
   if(S.over)prompt=`<div class="prompt"><div class="msg"><b>Game over.</b> ${esc(S.players[S.winner].name)} wins.</div><button class="btn primary" id="btnScore">Show final scores</button></div>`;
-  else if(p.ai)prompt=`<div class="prompt"><div class="msg">${esc(p.name)} is thinking…</div></div>`;
+  else if(!myTurn())prompt=`<div class="prompt"><div class="msg">${turnP.ai?`${esc(turnP.name)} is thinking…`:S.online&&!turnP.online?`Waiting for ${esc(turnP.name)} to reconnect…`:`Waiting for ${esc(turnP.name)}…`}</div></div>`;
+  else if(S.phase==='discard')prompt=`<div class="prompt"><div class="msg"><b>Caravan over capacity.</b> Click cubes to return ${cnt-10} to the bowls.</div></div>`;
   else if(UI.mode==='idle')prompt=`<div class="actions"><span>Choose one action — play a card from your hand, acquire a merchant card, claim a point card, or</span><button class="btn" id="btnRest">Rest — take back ${p.played.length} played card${p.played.length!==1?'s':''}</button></div>`;
   else if(UI.mode==='trade')prompt=`<div class="prompt"><div class="msg">Trade ${cubesTxt(UI.card.inp)} → ${cubesTxt(UI.card.out)}. How many times?</div>${Array.from({length:UI.max},(_,k)=>`<button class="btn" data-times="${k+1}">×${k+1}</button>`).join('')}<button class="btn small" id="btnCancel">Cancel</button></div>`;
   else if(UI.mode==='upgrade')prompt=`<div class="prompt"><div class="msg">Upgrade ${UI.card.n}: click cubes in your caravan to raise them one level (${UI.left} left). You may stop early.</div><button class="btn small" id="btnUndo" ${UI.ups.length?'':'disabled'}>Undo</button><button class="btn primary" id="btnConfirm">Done</button><button class="btn small" id="btnCancel">Cancel</button></div>`;
   else if(UI.mode==='pay')prompt=`<div class="prompt"><div class="msg">Acquire card #${UI.idx+1}: place one cube on each card to its left. Click caravan cubes to choose (any colour).<div class="payrow" style="margin-top:6px">${UI.pay.map((i,k)=>`<button class="payslot cubebtn" data-unpay="${k}" title="Remove">${cube(SP[i],'lg')}</button>`).join('')}${Array.from({length:UI.idx-UI.pay.length},()=>'<span class="payslot"></span>').join('')}</div></div><button class="btn small" id="btnCheap">Cheapest</button><button class="btn primary" id="btnConfirm" ${UI.pay.length===UI.idx?'':'disabled'}>Confirm</button><button class="btn small" id="btnCancel">Cancel</button></div>`;
-  else if(UI.mode==='discard')prompt=`<div class="prompt"><div class="msg"><b>Caravan over capacity.</b> Click cubes to return ${cnt-10} to the bowls.</div></div>`;
 
+  const who=S.online?`${esc(p.name)} <span class="tag" style="color:var(--muted);border-color:var(--line)">you</span> — ${S.cur===vs?'your turn':`${esc(turnP.name)}'s turn`}`:`${esc(p.name)}${p.ai?' <span class="tag" style="color:var(--muted);border-color:var(--line)">bot</span>':''} — your turn`;
   $('#app').innerHTML=`
   <div class="stack">
     <div class="mat"><h2><span>Point cards</span><span class="hint">gold = 3 pts · silver = 1 pt</span></h2>
@@ -550,7 +699,7 @@ function render(){
       <div class="row">${mm}<div class="deck">${cardBack('mc')}<div class="cnt">${S.mdeck.length}</div></div></div></div>
     <div class="mat"><h2><span>Caravans</span><span class="hint">Round ${S.round}${S.endTriggered?' · final round':''}</span></h2><div class="players">${others}</div></div>
     <div class="mat you">
-      <div class="head"><span class="who">${esc(p.name)}${p.ai?' <span class="tag" style="color:var(--muted);border-color:var(--line)">bot</span>':''} — your turn</span><span style="color:var(--muted);font-size:14px">${p.points.length}/${S.target} point cards · ${score(p)} pts so far</span></div>
+      <div class="head"><span class="who">${who}</span><span style="color:var(--muted);font-size:14px">${p.points.length}/${S.target} point cards · ${score(p)} pts so far</span></div>
       <div class="caravan">${camelSVG}<div class="slots">${slots}</div><span class="cap num ${cnt>10?'over':''}">${cnt} / 10</span></div>
       ${prompt}
       <h2 style="margin-top:12px"><span>Hand</span><span class="hint">${p.hand.length} card${p.hand.length!==1?'s':''}</span></h2>
@@ -566,8 +715,9 @@ function render(){
   document.querySelectorAll('[data-mk]').forEach(e=>e.onclick=()=>onMarketCard(+e.dataset.mk));
   document.querySelectorAll('[data-hand]').forEach(e=>e.onclick=()=>onHandCard(p.hand.find(c=>c.id===e.dataset.hand)));
   document.querySelectorAll('[data-cube]').forEach(e=>e.onclick=()=>onCube(+e.dataset.cube));
-  document.querySelectorAll('[data-times]').forEach(e=>e.onclick=()=>{doPlayTrade(p,UI.card,+e.dataset.times);endTurn()});
+  document.querySelectorAll('[data-times]').forEach(e=>e.onclick=()=>dispatch({k:'trade',id:UI.card.id,times:+e.dataset.times}));
   document.querySelectorAll('[data-unpay]').forEach(e=>e.onclick=()=>{UI.pay.splice(+e.dataset.unpay,1);render()});
+  document.querySelectorAll('[data-botify]').forEach(e=>e.onclick=()=>{const q=S.players[+e.dataset.botify];q.ai=true;q.owner='bot';q.online=true;log(`<b>${q.name}</b>'s seat is now played by a bot.`);afterChange()});
   const b=id=>document.getElementById(id);
   if(b('btnRest'))b('btnRest').onclick=onRest;
   if(b('btnCancel'))b('btnCancel').onclick=cancelUI;
@@ -582,27 +732,71 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
    MODALS
    ================================================================ */
 function closeModal(){$('#modals').innerHTML=''}
+function showMenu(){
+  $('#modals').innerHTML=`<div class="overlay"><div class="modal"><h2>New game</h2>
+  <div class="menu">
+    <button class="mopt" id="mLocal"><b>Same device</b><span>Pass the screen around, or play against bots.</span></button>
+    <button class="mopt" id="mHost"><b>Host online</b><span>Get a room code; friends join from their own devices. Your browser runs the game.</span></button>
+    <button class="mopt" id="mJoin"><b>Join online</b><span>Enter a friend's room code.</span></button>
+  </div>
+  <div class="foot"><button class="btn" id="mCancel">Cancel</button></div></div></div>`;
+  $('#mCancel').onclick=closeModal;$('#mLocal').onclick=showSetup;$('#mHost').onclick=()=>showOnlineForm('host');$('#mJoin').onclick=()=>showOnlineForm('join');
+}
+function showOnlineForm(kind,code=''){
+  const name=NET.name||localStorage.getItem('csr-name')||'';
+  $('#modals').innerHTML=`<div class="overlay"><div class="modal setup"><h2>${kind==='host'?'Host an online game':'Join an online game'}</h2>
+  <p>${kind==='host'?'You will get a 5-letter room code and a link to share. Keep this tab open — it runs the game for everyone.':'Ask the host for their room code, or open the link they shared.'}</p>
+  <label class="lbl" for="nName">Your name</label><input type="text" id="nName" value="${esc(name)}" maxlength="18" placeholder="Your name">
+  ${kind==='join'?`<label class="lbl" for="nCode">Room code</label><input type="text" id="nCode" value="${esc(code)}" maxlength="5" placeholder="ABCDE" style="text-transform:uppercase;letter-spacing:.2em;font-family:Cinzel,serif">`:''}
+  <div class="foot"><button class="btn" id="mBack">Back</button><button class="btn primary" id="mGo">${kind==='host'?'Create room':'Join'}</button></div></div></div>`;
+  $('#mBack').onclick=showMenu;
+  const go=()=>{const n=cleanName($('#nName').value);try{localStorage.setItem('csr-name',n)}catch(e){}
+    if(!peerAvailable()){netError({message:'The connection library did not load. Check your internet connection and reload.'});return}
+    if(kind==='host')hostGame(n);else{const c=($('#nCode').value||'').toUpperCase().replace(/[^A-Z0-9]/g,'');if(c.length!==5){toast('Room codes are 5 letters.');return}joinGame(c,n)}};
+  $('#mGo').onclick=go;
+  document.querySelectorAll('#modals input').forEach(i=>i.onkeydown=e=>{if(e.key==='Enter')go()});
+  $('#nName').focus();
+}
+function showLobby(status){
+  const host=NET.role==='host';const players=host?NET.lobby:(NET.lobby||[]);
+  const link=`${location.origin}${location.pathname}?room=${NET.code||''}`;
+  const rows=players.map((x,i)=>`<div class="lrow"><span class="num" style="color:var(--parch-muted)">${i+1}</span><span>${esc(x.name)}${x.ai?' <span class="tag">bot</span>':''}${(host?x.owner==='host':x.host)?' <span class="tag">host</span>':''}${!host&&x.name===NET.name?' <span class="tag">you</span>':''}</span>${host&&x.owner!=='host'?`<button class="btn small" data-kick="${i}">Remove</button>`:'<span></span>'}</div>`).join('');
+  $('#modals').innerHTML=`<div class="overlay"><div class="modal lobby"><h2>${host?'Your room':'Room'} ${esc(NET.code||'')}</h2>
+  ${status?`<p>${esc(status)}</p>`:''}
+  ${NET.code&&!status?`<p>Share this link or the code: <a href="${esc(link)}" target="_blank" rel="noopener">${esc(link)}</a> <button class="btn small" id="mCopy">Copy link</button></p>`:''}
+  <div class="lrows">${rows||'<p style="color:var(--parch-muted)">Waiting for players…</p>'}</div>
+  <p style="color:var(--parch-muted);font-size:14px">Seat order is turn order. ${host?'2–5 players; add bots to fill empty seats.':'The host starts the game when everyone is in.'}</p>
+  <div class="foot"><button class="btn" id="mLeave">Leave</button>${host?`<button class="btn" id="mBot" ${players.length>=5?'disabled':''}>Add bot</button><button class="btn" id="mShuffle">Shuffle seats</button><button class="btn primary" id="mStart" ${players.length<2?'disabled':''}>Start game</button>`:''}</div></div></div>`;
+  $('#mLeave').onclick=()=>{netReset();closeModal();if(!S)showMenu();else render()};
+  if($('#mCopy'))$('#mCopy').onclick=()=>{navigator.clipboard?.writeText(link).then(()=>toast('Link copied'),()=>toast(link))};
+  if(host){
+    document.querySelectorAll('[data-kick]').forEach(e=>e.onclick=()=>{const x=NET.lobby[+e.dataset.kick];if(x.owner!=='host'&&x.owner!=='bot'){const c=NET.conns.get(x.owner);if(c){c.send({t:'err',msg:'The host removed you from the room.',fatal:true});setTimeout(()=>c.close(),300)}NET.conns.delete(x.owner)}NET.lobby.splice(+e.dataset.kick,1);broadcastLobby();showLobby()});
+    $('#mBot').onclick=()=>{const names=['Amira','Bashir','Cyra','Darius','Esen'].filter(n=>!NET.lobby.some(x=>x.name===n));NET.lobby.push({name:names[0]||'Bot',owner:'bot',ai:true,online:true});broadcastLobby();showLobby()};
+    $('#mShuffle').onclick=()=>{shuffle(NET.lobby);broadcastLobby();showLobby()};
+    $('#mStart').onclick=hostStart;
+  }
+}
 function showSetup(){
-  const prev=S?S.players.map(q=>({name:q.name,ai:q.ai})):[{name:'You',ai:false},{name:'Amira',ai:true},{name:'Bashir',ai:true}];
+  const prev=S&&!S.online?S.players.map(q=>({name:q.name,ai:q.ai})):[{name:'You',ai:false},{name:'Amira',ai:true},{name:'Bashir',ai:true}];
   let n=prev.length;const names=['You','Amira','Bashir','Cyra','Darius'];
   const draw=()=>{
     const rows=Array.from({length:n},(_,i)=>{const q=prev[i]||{name:names[i],ai:i>0};
       return `<div class="prow"><span class="num" style="color:var(--parch-muted)">${i+1}</span><input type="text" id="pname${i}" value="${esc(q.name)}" maxlength="18"><select id="pai${i}"><option value="0" ${q.ai?'':'selected'}>Human</option><option value="1" ${q.ai?'selected':''}>Bot</option></select></div>`}).join('');
-    $('#modals').innerHTML=`<div class="overlay"><div class="modal setup"><h2>New game</h2>
+    $('#modals').innerHTML=`<div class="overlay"><div class="modal setup"><h2>Same device</h2>
       <p>Seat 2–5 players. Humans share this screen (hot-seat); bots play a greedy trading heuristic. Seat order is turn order — seat 1 is first player with 3 turmeric; seats 2–3 get 4; seats 4–5 get 3 turmeric + 1 saffron, per the rulebook.</p>
       <div style="display:flex;align-items:center;gap:10px;margin:10px 0;flex-wrap:wrap"><span>Players</span><span class="seg">${[2,3,4,5].map(k=>`<button data-n="${k}" class="${k===n?'on':''}">${k}</button>`).join('')}</span><span style="color:var(--parch-muted);font-size:14px">ends at ${n<=3?6:5} point cards</span></div>
-      ${rows}<div class="foot"><button class="btn" id="mCancel">Cancel</button><button class="btn primary" id="mStart">Start game</button></div></div></div>`;
+      ${rows}<div class="foot"><button class="btn" id="mBack">Back</button><button class="btn primary" id="mStart">Start game</button></div></div></div>`;
     document.querySelectorAll('[data-n]').forEach(e=>e.onclick=()=>{for(let i=0;i<n;i++)prev[i]={name:$('#pname'+i).value||names[i],ai:$('#pai'+i).value==='1'};n=+e.dataset.n;draw()});
-    $('#mCancel').onclick=closeModal;
-    $('#mStart').onclick=()=>{const players=Array.from({length:n},(_,i)=>({name:$('#pname'+i).value.trim()||names[i],ai:$('#pai'+i).value==='1'}));closeModal();newGame({players})};
+    $('#mBack').onclick=showMenu;
+    $('#mStart').onclick=()=>{const players=Array.from({length:n},(_,i)=>({name:$('#pname'+i).value.trim()||names[i],ai:$('#pai'+i).value==='1'}));closeModal();netReset();newGame({players})};
   };draw();
 }
 function showScores(){
   const rows=S.players.map((p,i)=>({p,i,s:score(p)})).sort((a,b)=>b.s-a.s||b.i-a.i).map(r=>`<tr class="${r.i===S.winner?'win':''}"><td>${esc(r.p.name)}</td><td class="num">${r.p.points.reduce((a,c)=>a+c.pts,0)} <small style="color:var(--parch-muted)">(${r.p.points.length})</small></td><td class="num">${r.p.gold*3} <small style="color:var(--parch-muted)">(${r.p.gold})</small></td><td class="num">${r.p.silver}</td><td class="num">${r.p.caravan[1]+r.p.caravan[2]+r.p.caravan[3]}</td><td class="num"><b>${r.s}</b></td></tr>`).join('');
   $('#modals').innerHTML=`<div class="overlay"><div class="modal"><h2>Final scores</h2><p>Point cards + 3 per gold + 1 per silver + 1 per non-turmeric cube left in the caravan. Ties go to the player later in turn order.</p>
   <table class="score"><thead><tr><th>Player</th><th>Cards</th><th>Gold</th><th>Silver</th><th>Cubes</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
-  <div class="foot"><button class="btn" id="mClose">Close</button><button class="btn primary" id="mNew">New game</button></div></div></div>`;
-  $('#mClose').onclick=closeModal;$('#mNew').onclick=()=>{closeModal();showSetup()};
+  <div class="foot"><button class="btn" id="mClose">Close</button>${NET.role==='guest'?'':'<button class="btn primary" id="mNew">New game</button>'}</div></div></div>`;
+  $('#mClose').onclick=closeModal;if($('#mNew'))$('#mNew').onclick=()=>{closeModal();if(NET.role==='host'){NET.lobby=S.players.map(p=>({name:p.name,owner:p.owner,ai:p.ai,online:p.online})).filter(p=>p.ai||p.online);showLobby()}else showMenu()};
 }
 function showRules(){
   $('#modals').innerHTML=`<div class="overlay"><div class="modal rules"><h2>How to play</h2>
@@ -615,6 +809,7 @@ function showRules(){
   <h3>Caravan limit</h3><p>At the end of your turn you may hold at most 10 cubes; return any extra.</p>
   <h3>Game end</h3><p>When someone claims their 5th point card (6th with 2–3 players) the round is finished so everyone has had equal turns. Score point cards, coins, and 1 per non-turmeric cube left. Ties go to the player later in turn order.</p>
   <h3>Setup</h3><p>Each player starts with a <i>Spice 2 turmeric</i> card and an <i>Upgrade 2</i> card (purple-framed starters). Starting cubes by turn order: 3 · 4 · 4 · 3+1 saffron · 3+1 saffron. Coins: 2× players each of gold and silver. Five point cards and six merchant cards are dealt face up.</p>
+  <h3>Playing online</h3><p>One player hosts and shares a 5-letter room code or link; the others join from their own devices. The host's browser runs the game, so it must stay open. If a guest drops, they can rejoin with the same name, or the host can hand their seat to a bot. Connections are peer-to-peer (WebRTC); no game data is stored on a server.</p>
   <h3>Sources</h3>
   <ul><li><a href="https://cdn.svc.asmodee.net/production-nextmove/uploads/sites/4/2024/06/EN-Century-Spice-Road-Rules_2024_compressed.pdf" target="_blank" rel="noopener">Official rulebook (Plan B Games, 2024 edition)</a></li>
   <li><a href="https://boardgamegeek.com/thread/1871993/list-of-contract-objective-victory-point-cards" target="_blank" rel="noopener">All 36 point cards (BGG)</a> · <a href="https://boardgamegeek.com/thread/2067607" target="_blank" rel="noopener">All 43 merchant cards (BGG)</a></li>
@@ -627,16 +822,19 @@ function showRules(){
 /* ================================================================
    PERSISTENCE + BOOT
    ================================================================ */
-function save(){try{localStorage.setItem('csr-state2',JSON.stringify({S,UI}))}catch(e){}}
-function load(){try{const j=JSON.parse(localStorage.getItem('csr-state2'));if(j&&j.S&&j.S.players)return j}catch(e){}return null}
-window.claude?.hot?.snapshot?.(()=>({S,UI}));
+function save(){if(NET.mode!=='local'||!S||S.online)return;try{localStorage.setItem('csr-state3',JSON.stringify({S}))}catch(e){}}
+function load(){try{const j=JSON.parse(localStorage.getItem('csr-state3'));if(j&&j.S&&j.S.players)return j}catch(e){}return null}
+window.claude?.hot?.snapshot?.(()=>(NET.mode==='local'?{S}:{}));
 function start(hot){
+  const room=new URLSearchParams(location.search).get('room');
   const saved=(hot&&hot.S)?hot:load();
-  if(saved){S=saved.S;UI=saved.UI&&saved.UI.mode==='discard'?saved.UI:{mode:'idle'};render();maybeAI()}
+  if(saved){S=saved.S;if(!S.phase)S.phase='play';S.players.forEach(p=>{if(!p.owner)p.owner=p.ai?'bot':'local';if(p.online==null)p.online=true});UI={mode:'idle'};render();maybeAI()}
   else newGame({players:[{name:'You',ai:false},{name:'Amira',ai:true},{name:'Bashir',ai:true}]});
+  if(room){history.replaceState(null,'',location.pathname);showOnlineForm('join',room.toUpperCase())}
 }
-$('#btnNew').onclick=showSetup;$('#btnRules').onclick=showRules;
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#modals').innerHTML)closeModal()});
+$('#btnNew').onclick=showMenu;$('#btnRules').onclick=showRules;
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#modals').innerHTML&&!$('#modals .lobby'))closeModal()});
+window.addEventListener('beforeunload',e=>{if(NET.role==='host'&&S&&S.online&&!S.over){e.preventDefault();e.returnValue=''}});
 window.claude?.hot?.ready?window.claude.hot.ready(start):start(window.claude?.hot?.data??{});
 </script>
 
