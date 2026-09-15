@@ -8,7 +8,7 @@ A fan-made, single-file browser implementation of **Century: Spice Road** (Emers
 - No build step, no dependencies: open `index.html` in a browser.
 
 ## Sources
-- [Official rulebook (Plan B Games, 2024)](https://cdn.svc.asmodee.net/production-nextmove/uploads/sites/4/2024/06/EN-Century-Spice-Road-Rules_2024_compressed.pdf)
+- [Rulebook (Plan B Games, 2024)](https://cdn.svc.asmodee.net/production-nextmove/uploads/sites/4/2024/06/EN-Century-Spice-Road-Rules_2024_compressed.pdf)
 - [Point card list (BGG)](https://boardgamegeek.com/thread/1871993/list-of-contract-objective-victory-point-cards) · [Merchant card list (BGG)](https://boardgamegeek.com/thread/2067607)
 
 Century: Spice Road is © Plan B Games. This is an unofficial project for personal play.
