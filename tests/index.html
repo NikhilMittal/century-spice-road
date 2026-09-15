@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Engine tests — Century: Spice Road</title>
+<style>
+body{font:14px/1.5 ui-monospace,Menlo,monospace;background:#1B1418;color:#F1E4C9;padding:20px;max-width:900px;margin:auto}
+h1{font-size:18px;color:#D9AA3E}
+.t{padding:4px 8px;border-left:3px solid #4E8F5A;margin:3px 0;background:rgba(255,255,255,.03)}
+.t.fail{border-color:#C43A2A;background:rgba(196,58,42,.12)}
+pre{white-space:pre-wrap;color:#F0B75A;margin:4px 0 0 12px}
+#sum{font-weight:bold;margin:12px 0}
+</style>
+</head>
+<body>
+<h1>Century: Spice Road — engine tests</h1>
+<div id="sum">running…</div>
+<div id="out"></div>
+<script>
+// Minimal harness so tests/engine.test.js runs here as well as under `node --test`.
+(function(){
+  const out=document.getElementById('out'),sum=document.getElementById('sum');
+  const results=[];window.__testResults=results;
+  const fmt=v=>typeof v==='string'?v:JSON.stringify(v);
+  const assert={
+    ok:(v,m)=>{if(!v)throw new Error(m||'expected truthy, got '+fmt(v))},
+    equal:(a,b,m)=>{if(a!==b)throw new Error((m?m+': ':'')+`expected ${fmt(b)}, got ${fmt(a)}`)},
+    notEqual:(a,b,m)=>{if(a===b)throw new Error((m?m+': ':'')+`expected not ${fmt(b)}`)},
+    deepEqual:(a,b,m)=>{if(JSON.stringify(a)!==JSON.stringify(b))throw new Error((m?m+': ':'')+`expected ${fmt(b)}, got ${fmt(a)}`)},
+    match:(s,re,m)=>{if(!re.test(String(s)))throw new Error((m?m+': ':'')+`expected ${fmt(s)} to match ${re}`)},
+    throws:(fn,m)=>{let t=false;try{fn()}catch(e){t=true}if(!t)throw new Error(m||'expected to throw')},
+  };
+  const queue=[];
+  window.assert=assert;window.test=(name,fn)=>queue.push({name,fn});
+  window.addEventListener('load',async()=>{
+    let pass=0,fail=0;
+    for(const {name,fn} of queue){const t0=performance.now();const el=document.createElement('div');el.className='t';
+      try{await fn();pass++;el.textContent=`✓ ${name} (${(performance.now()-t0).toFixed(0)} ms)`}
+      catch(e){fail++;el.className='t fail';el.textContent=`✗ ${name}`;const pre=document.createElement('pre');pre.textContent=e.stack||e.message;el.appendChild(pre)}
+      out.appendChild(el);results.push({name,ok:el.className==='t'});await new Promise(r=>setTimeout(r,0));}
+    sum.textContent=`${pass} passed, ${fail} failed, ${queue.length} total`;sum.style.color=fail?'#E86A4F':'#6BB878';
+    window.__testsDone={pass,fail};
+  });
+})();
+</script>
+<script src="../engine.js"></script>
+<script src="engine.test.js"></script>
+</body>
+</html>

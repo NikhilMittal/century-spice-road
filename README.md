@@ -6,7 +6,18 @@ A fan-made, single-file browser implementation of **Century: Spice Road** (Emers
 - Rules per the 2024 rulebook: one action per turn (Play / Acquire / Rest / Claim), 10-cube caravan limit, gold/silver coin piles that slide, end trigger at 5 point cards (6 with 2–3 players), tie-break to the later player in turn order.
 - All card illustrations, coins and cubes are drawn procedurally in SVG — no published artwork is used.
 - **Play online with friends:** one player hosts and shares a 5-letter room code or link; others join from their own devices. Peer-to-peer over WebRTC (PeerJS for signaling) — the host's browser runs the game, no game server. The host's browser saves the game after every move, so a closed tab or dropped connection can be resumed under the same room code; guests reconnect automatically and keep their seats (or the host can hand a seat to a bot). Uses STUN plus a public TURN relay so most networks can connect.
+- Bots at three levels: **Easy** (loose, makes mistakes), **Normal** (greedy one-turn heuristic), **Hard** (searches two of its own turns ahead; wins ~9 in 10 against Normal).
+- Animated table: cards slide from the decks and between market, hand and played pile; cubes and coins fly between caravans, cards and piles. Respects `prefers-reduced-motion`.
 - No build step, no backend: open `index.html` in a browser (online play needs an internet connection for signaling).
+
+## Code layout
+| File | Role |
+|---|---|
+| `engine.js` | Rules and bots. Pure functions over an explicit game state; runs in the browser and in Node. |
+| `art.js` | Procedural SVG: cubes, coins, card faces, backs, table props. |
+| `net.js` | Online play (PeerJS/WebRTC), host persistence and resume, reconnection. |
+| `ui.js` | Rendering, this device's interaction, animations, menus, boot. |
+| `tests/` | Engine tests. `npm test` (Node 18+) or open `tests/index.html` in a browser. |
 
 **Play now:** https://nikhilmittal.github.io/century-spice-road/
 
