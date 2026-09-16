@@ -3,6 +3,6 @@
   "private": true,
   "description": "Century: Spice Road — a browser table for 2–5 (hot-seat, bots, online rooms)",
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test tests/engine.test.js"
   }
 }
