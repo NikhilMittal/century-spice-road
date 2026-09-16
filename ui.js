@@ -116,10 +116,14 @@ function render(){
   const vs=viewSeat(),p=S.players[vs],turnP=cur();
   const me=myTurn()&&S.phase==='play',idle=me&&UI.mode==='idle';
   const goldSlot=S.gold>0?0:-1,silverSlot=S.gold>0?1:0;
+  // hints: which point cards are one play away, and which hand cards get you there
+  const reach=idle?Engine.reachable(S,vs):[];
+  const nearIdx=new Set(reach.map(r=>r.idx)),enablers=new Map();
+  reach.forEach(r=>{const pts=S.pmarket[r.idx].pts;enablers.set(r.action.id,Math.max(enablers.get(r.action.id)||0,pts))});
   const pm=S.pmarket.map((pc,idx)=>{
     const coins=(idx===goldSlot?pileHTML(true,S.gold):'')+(idx===silverSlot?pileHTML(false,S.silver):'');
-    const ok=idle&&canAfford(p.caravan,pc.cost);
-    return `<div class="slot"><div class="coins">${coins}</div><button class="card ${ok?'clickable':(idle?'dim':'')}" data-cid="${pc.id}" data-kind="pt" ${ok?`data-pt="${idx}" title="Claim this card"`:'disabled'}>${pointFace(pc)}</button></div>`}).join('');
+    const ok=idle&&canAfford(p.caravan,pc.cost),near=!ok&&nearIdx.has(idx);
+    return `<div class="slot"><div class="coins">${coins}</div><button class="card ${ok?'clickable':(idle&&!near?'dim':'')} ${near?'near':''}" data-cid="${pc.id}" data-kind="pt" ${ok?`data-pt="${idx}" title="Claim this card"`:`disabled title="${near?'One play away':''}"`}>${pointFace(pc)}${near?'<span class="tip">1 play away</span>':''}</button></div>`}).join('');
   const mm=S.market.map((slot,idx)=>{
     const ok=idle&&idx<=total(p.caravan);
     return `<div class="slot"><div class="coins"><span class="free">${idx===0?'FREE':`${idx} CUBE${idx>1?'S':''}`}</span></div><button class="card ${ok?'clickable':(idle?'dim':'')}" data-cid="${slot.card.id}" data-kind="mc" ${ok?`data-mk="${idx}" title="Acquire this card"`:'disabled'}>${merchantFace(slot.card)}${total(slot.cubes)?`<span class="tip">${cubesHTML(slot.cubes)}</span>`:''}</button></div>`}).join('');
@@ -141,8 +145,8 @@ function render(){
   const hand=p.hand.map(c=>{let ok=idle;let why='';
     if(c.type==='trade'&&tradeMax(p.caravan,c)<1){ok=false;why='Not enough cubes'}
     if(c.type==='upgrade'&&p.caravan[0]+p.caravan[1]+p.caravan[2]<1){ok=false;why='Nothing to upgrade'}
-    const sel=UI.mode!=='idle'&&UI.card&&UI.card.id===c.id;
-    return `<button class="card ${ok?'clickable':(idle?'dim':'')} ${sel?'sel':''}" data-cid="${c.id}" data-kind="hand" ${ok?`data-hand="${c.id}" title="Play this card"`:`disabled title="${why}"`}>${merchantFace(c,c.starter)}${c.type==='trade'&&me?`<span class="tip">×${tradeMax(p.caravan,c)} max</span>`:''}</button>`}).join('')
+    const sel=UI.mode!=='idle'&&UI.card&&UI.card.id===c.id;const en=enablers.get(c.id);
+    return `<button class="card ${ok?'clickable':(idle?'dim':'')} ${sel?'sel':''} ${en?'enables':''}" data-cid="${c.id}" data-kind="hand" ${ok?`data-hand="${c.id}" title="${en?`Play this and you can claim a ${en}-point card`:'Play this card'}"`:`disabled title="${why}"`}>${merchantFace(c,c.starter)}${c.type==='trade'&&me?`<span class="tip">×${tradeMax(p.caravan,c)} max</span>`:''}${en?`<span class="badge">→ ${en} pts</span>`:''}</button>`}).join('')
     ||'<div style="color:var(--muted);padding:8px 4px">No cards in hand — rest to take your played cards back.</div>';
   const played=p.played.map(c=>`<span class="card" data-cid="${c.id}" data-kind="played">${merchantFace(c,c.starter)}</span>`).join('')||'<div style="color:var(--muted);padding:6px 4px;font-size:14px">Nothing played yet this cycle.</div>';
 
@@ -190,8 +194,41 @@ function render(){
   if(b('btnUndo'))b('btnUndo').onclick=undoUpgrade;
   if(b('btnCheap'))b('btnCheap').onclick=()=>{UI.pay=cheapest(p.caravan,UI.idx);render()};
   if(b('btnScore'))b('btnScore').onclick=showScores;
+  wireZoom();
   if(before&&Anim.prev)try{animateChanges(before,Anim.prev,S)}catch(e){console.warn('animation skipped',e)}
   Anim.prev=Engine.clone(S);
+}
+
+/* ================================================================
+   CARD ZOOM — press and hold (touch), hover for a moment (mouse), or right-click any card
+   ================================================================ */
+function findCard(id){
+  for(const pc of S.pmarket)if(pc.id===id)return {card:pc,kind:'pt'};
+  for(const s of S.market)if(s.card.id===id)return {card:s.card,kind:'mc',cubes:s.cubes};
+  for(const p of S.players){for(const c of p.hand)if(c.id===id)return {card:c,kind:'mc'};for(const c of p.played)if(c.id===id)return {card:c,kind:'mc'};for(const c of p.points)if(c.id===id)return {card:c,kind:'pt'}}
+  return null;
+}
+function cardCaption(f){
+  const c=f.card;
+  if(f.kind==='pt'){const vs=viewSeat(),p=S.players[vs];const short=c.cost.map((x,i)=>Math.max(0,x-p.caravan[i]));
+    return `<b>${c.pts} points</b> · needs ${cubesTxt(c.cost)}${canAfford(p.caravan,c.cost)?' — <span class="ok">you can claim this now</span>':total(short)?` — you are short ${cubesTxt(short)}`:''}`}
+  if(c.type==='spice')return `<b>Spice card</b> · gain ${cubesTxt(c.gain)}`;
+  if(c.type==='trade')return `<b>Trade card</b> · give ${cubesTxt(c.inp)} for ${cubesTxt(c.out)}, as many times as you can pay${f.cubes&&total(f.cubes)?` · comes with ${cubesTxt(f.cubes)} on it`:''}`;
+  return `<b>Upgrade ${c.n}</b> · raise cubes one level (turmeric → saffron → cardamom → cinnamon), up to ${c.n} times, stopping early if you like`;
+}
+let zoomTimer=null,zoomSuppressClick=false;
+function showZoom(id){const f=findCard(id);if(!f)return;let z=$('#zoom');if(!z){z=document.createElement('div');z.id='zoom';document.body.appendChild(z)}
+  z.innerHTML=`<div class="zcard">${f.kind==='pt'?pointFace(f.card):merchantFace(f.card,f.card.starter)}</div><div class="zcap">${cardCaption(f)}<div class="zhint">release or click anywhere to close</div></div>`;
+  z.classList.add('show');z.onclick=hideZoom;zoomSuppressClick=true}
+function hideZoom(){const z=$('#zoom');if(z)z.classList.remove('show');clearTimeout(zoomTimer);zoomTimer=null;setTimeout(()=>{zoomSuppressClick=false},50)}
+function wireZoom(){
+  document.querySelectorAll('.card[data-cid]').forEach(el=>{const id=el.dataset.cid;
+    el.onpointerdown=e=>{if(e.button!==0)return;clearTimeout(zoomTimer);zoomTimer=setTimeout(()=>showZoom(id),e.pointerType==='mouse'?650:420)};
+    el.onpointerup=el.onpointerleave=el.onpointercancel=()=>{clearTimeout(zoomTimer);if($('#zoom')&&$('#zoom').classList.contains('show'))hideZoom()};
+    el.onpointerenter=e=>{if(e.pointerType==='mouse'){clearTimeout(zoomTimer);zoomTimer=setTimeout(()=>showZoom(id),900)}};
+    el.oncontextmenu=e=>{e.preventDefault();showZoom(id)};
+    el.addEventListener('click',e=>{if(zoomSuppressClick){e.stopImmediatePropagation();e.preventDefault()}},true);
+  });
 }
 
 /* ================================================================
@@ -262,11 +299,51 @@ function showSetup(){
     $('#mStart').onclick=()=>{read();const players=Array.from({length:n},(_,i)=>({name:prev[i].name.trim()||names[i],ai:prev[i].ai,level:prev[i].level}));closeModal();netReset();newGame({players})};
   };draw();
 }
+// player colours for the timeline: fixed by seat, from a CVD-checked categorical palette
+const SERIES=['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4'];
+function timelineHTML(){
+  const H=S.history||[];if(H.length<2)return '';
+  const n=S.players.length,W=640,Hh=240,L=36,R=110,T=16,B=30;
+  const maxT=H[H.length-1].t,maxS=Math.max(10,...H.map(h=>Math.max(...h.s)));
+  const x=t=>L+(t-1)/Math.max(1,maxT-1)*(W-L-R),y=s=>T+(1-s/maxS)*(Hh-T-B);
+  // series: score after each turn, starting from 0 at turn 1
+  const series=S.players.map((p,i)=>[{t:1,s:0},...H.map(h=>({t:h.t,s:h.s[i]}))]);
+  const step=maxS>40?20:maxS>20?10:5;const ticks=[];for(let v=0;v<=maxS;v+=step)ticks.push(v);
+  const lines=series.map((pts,i)=>`<path d="${pts.map((q,j)=>(j?'L':'M')+x(q.t).toFixed(1)+' '+y(q.s).toFixed(1)).join(' ')}" fill="none" stroke="${SERIES[i]}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`).join('');
+  const ends=series.map((pts,i)=>{const q=pts[pts.length-1];return `<circle cx="${x(q.t).toFixed(1)}" cy="${y(q.s).toFixed(1)}" r="4" fill="${SERIES[i]}" stroke="#F1E1BF" stroke-width="2"/>`}).join('');
+  // end labels, nudged apart so they never overlap
+  const lab=series.map((pts,i)=>({i,yy:y(pts[pts.length-1].s),name:S.players[i].name,s:pts[pts.length-1].s})).sort((a,b)=>a.yy-b.yy);
+  for(let k=1;k<lab.length;k++)if(lab[k].yy-lab[k-1].yy<14)lab[k].yy=lab[k-1].yy+14;
+  const labels=lab.map(l=>`<text x="${W-R+10}" y="${(l.yy+4).toFixed(1)}" font-size="12" fill="#2B1B12" font-family="Alegreya Sans,sans-serif"><tspan fill="${SERIES[l.i]}">●</tspan> ${esc(l.name)} <tspan fill="#6E5238">${l.s}</tspan></text>`).join('');
+  const grid=ticks.map(v=>`<line x1="${L}" x2="${W-R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#B89A6B" stroke-opacity=".35"/><text x="${L-6}" y="${(y(v)+4).toFixed(1)}" font-size="11" text-anchor="end" fill="#6E5238" font-family="Alegreya Sans,sans-serif">${v}</text>`).join('');
+  const xt=[1,...Array.from({length:Math.floor(maxT/10)},(_,k)=>(k+1)*10)].filter(v=>v<=maxT);if(xt[xt.length-1]!==maxT)xt.push(maxT);
+  const xlab=xt.map(v=>`<text x="${x(v).toFixed(1)}" y="${Hh-8}" font-size="11" text-anchor="middle" fill="#6E5238" font-family="Alegreya Sans,sans-serif">${v}</text>`).join('');
+  return `<h3>Points over the game</h3><div class="tl" id="tl"><svg viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Score of each player after every turn">${grid}${lines}${ends}${labels}${xlab}<text x="${(L+(W-R))/2}" y="${Hh+2}" font-size="10" text-anchor="middle" fill="#6E5238" font-family="Alegreya Sans,sans-serif">turn</text><g id="tlx" style="display:none"><line y1="${T}" y2="${Hh-B}" stroke="#2B1B12" stroke-opacity=".5" stroke-dasharray="3 3"/></g></svg><div class="tltip" id="tltip"></div></div>`;
+}
+function wireTimeline(){
+  const box=$('#tl');if(!box)return;const svg=box.querySelector('svg'),xline=$('#tlx'),tip=$('#tltip');const H=S.history;
+  const W=640,L=36,R=110,maxT=H[H.length-1].t;
+  svg.onmousemove=e=>{const r=svg.getBoundingClientRect();const px=(e.clientX-r.left)/r.width*W;let t=Math.round(1+(px-L)/(W-L-R)*(maxT-1));t=Math.max(1,Math.min(maxT,t));
+    const h=[...H].reverse().find(q=>q.t<=t);const sx=L+(t-1)/Math.max(1,maxT-1)*(W-L-R);
+    xline.style.display='';xline.firstElementChild.setAttribute('x1',sx);xline.firstElementChild.setAttribute('x2',sx);
+    const who=S.players[h?h.seat:0];const what=h?({claim:`claimed ${h.d} pts`,trade:`traded (+${h.d} value)`,spice:`gained ${h.d} value`,acquire:h.d?`acquired card #${h.d+1}`:'acquired the free card',upgrade:'upgraded',rest:'rested'})[h.k]:'';
+    tip.innerHTML=`<b>Turn ${t}</b> · ${esc(who.name)} ${what}<br>${S.players.map((p,i)=>`<span style="color:${SERIES[i]}">●</span> ${esc(p.name)} ${h?h.s[i]:0}`).join(' &nbsp; ')}`;
+    tip.style.display='block';const tx=Math.min(r.width-tip.offsetWidth-8,Math.max(0,(e.clientX-r.left)+12));tip.style.left=tx+'px';tip.style.top=(e.clientY-r.top+12)+'px'};
+  svg.onmouseleave=()=>{xline.style.display='none';tip.style.display='none'};
+}
+function statsHTML(){
+  const H=S.history||[];if(!H.length)return '';
+  const rows=S.players.map((p,i)=>{const mine=H.filter(h=>h.seat===i);const best=Math.max(0,...mine.filter(h=>h.k==='trade').map(h=>h.d));const claims=mine.filter(h=>h.k==='claim');
+    return `<tr><td><span style="color:${SERIES[i]}">●</span> ${esc(p.name)}</td><td class="num">${claims.length}</td><td class="num">${claims.length?Math.max(...claims.map(h=>h.d)):'—'}</td><td class="num">${best||'—'}</td><td class="num">${mine.filter(h=>h.k==='acquire').length}</td><td class="num">${mine.filter(h=>h.k==='rest').length}</td></tr>`}).join('');
+  return `<h3>How the game went</h3><table class="score stats"><thead><tr><th>Player</th><th>Claims</th><th>Best card</th><th>Best trade</th><th>Acquired</th><th>Rests</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
 function showScores(){
-  const rows=Engine.ranking(S).map(r=>`<tr class="${r.i===S.winner?'win':''}"><td>${esc(r.p.name)}</td><td class="num">${r.p.points.reduce((a,c)=>a+c.pts,0)} <small style="color:var(--parch-muted)">(${r.p.points.length})</small></td><td class="num">${r.p.gold*3} <small style="color:var(--parch-muted)">(${r.p.gold})</small></td><td class="num">${r.p.silver}</td><td class="num">${r.p.caravan[1]+r.p.caravan[2]+r.p.caravan[3]}</td><td class="num"><b>${r.s}</b></td></tr>`).join('');
-  $('#modals').innerHTML=`<div class="overlay"><div class="modal"><h2>Final scores</h2><p>Point cards + 3 per gold + 1 per silver + 1 per non-turmeric cube left in the caravan. Ties go to the player later in turn order.</p>
+  const rows=Engine.ranking(S).map(r=>`<tr class="${r.i===S.winner?'win':''}"><td><span style="color:${SERIES[r.i]}">●</span> ${esc(r.p.name)}</td><td class="num">${r.p.points.reduce((a,c)=>a+c.pts,0)} <small style="color:var(--parch-muted)">(${r.p.points.length})</small></td><td class="num">${r.p.gold*3} <small style="color:var(--parch-muted)">(${r.p.gold})</small></td><td class="num">${r.p.silver}</td><td class="num">${r.p.caravan[1]+r.p.caravan[2]+r.p.caravan[3]}</td><td class="num"><b>${r.s}</b></td></tr>`).join('');
+  $('#modals').innerHTML=`<div class="overlay"><div class="modal wide"><h2>Final scores</h2><p>Point cards + 3 per gold + 1 per silver + 1 per non-turmeric cube left in the caravan. Ties go to the player later in turn order.</p>
   <table class="score"><thead><tr><th>Player</th><th>Cards</th><th>Gold</th><th>Silver</th><th>Cubes</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
+  ${timelineHTML()}${statsHTML()}
   <div class="foot"><button class="btn" id="mClose">Close</button>${NET.role==='guest'?'':'<button class="btn primary" id="mNew">New game</button>'}</div></div></div>`;
+  wireTimeline();
   $('#mClose').onclick=closeModal;if($('#mNew'))$('#mNew').onclick=()=>{closeModal();if(NET.role==='host'){NET.lobby=S.players.map(p=>({name:p.name,owner:p.owner,ai:p.ai,level:p.level,online:p.online})).filter(p=>p.ai||p.online);showLobby()}else showMenu()};
 }
 function showRules(){
@@ -300,7 +377,7 @@ window.claude?.hot?.snapshot?.(()=>(NET.mode==='local'?{S}:{}));
 function start(hot){
   const room=new URLSearchParams(location.search).get('room');
   const saved=(hot&&hot.S)?hot:load();
-  if(saved){S=saved.S;if(!S.phase)S.phase='play';S.players.forEach(p=>{if(!p.owner)p.owner=p.ai?'bot':'local';if(p.online==null)p.online=true;if(!p.level)p.level='normal'});UI={mode:'idle'};render();maybeAI()}
+  if(saved){S=saved.S;if(!S.phase)S.phase='play';S.players.forEach(p=>{if(!p.owner)p.owner=p.ai?'bot':'local';if(p.online==null)p.online=true;if(!p.level)p.level='normal'});if(!S.history)S.history=[];UI={mode:'idle'};render();maybeAI()}
   else newGame({players:[{name:'You',ai:false},{name:'Amira',ai:true,level:'normal'},{name:'Bashir',ai:true,level:'normal'}]});
   if(room){history.replaceState(null,'',location.pathname);showOnlineForm('join',room.toUpperCase());return}
   const hostSaved=loadHost();

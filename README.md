@@ -5,8 +5,13 @@ A fan-made, single-file browser implementation of **Century: Spice Road** (Emers
 - Full official card set: 36 point cards, 43 merchant cards (34 trade · 8 spice · 1 Upgrade 3) plus the starter *Spice 2* / *Upgrade 2* cards.
 - Rules per the 2024 rulebook: one action per turn (Play / Acquire / Rest / Claim), 10-cube caravan limit, gold/silver coin piles that slide, end trigger at 5 point cards (6 with 2–3 players), tie-break to the later player in turn order.
 - All card illustrations, coins and cubes are drawn procedurally in SVG — no published artwork is used.
-- **Play online with friends:** one player hosts and shares a 5-letter room code or link; others join from their own devices. Peer-to-peer over WebRTC (PeerJS for signaling) — the host's browser runs the game, no game server. The host's browser saves the game after every move, so a closed tab or dropped connection can be resumed under the same room code; guests reconnect automatically and keep their seats (or the host can hand a seat to a bot). Uses STUN plus a public TURN relay so most networks can connect.
+- **Play online with friends:** one player hosts and shares a 5-letter room code or link; others join from their own devices. Peer-to-peer over WebRTC (PeerJS for signaling) — the host's browser runs the game, no game server. The host's browser saves the game after every move, so a closed tab or dropped connection can be resumed under the same room code; guests reconnect automatically and keep their seats (or the host can hand a seat to a bot). Uses STUN plus a public TURN relay so most networks can connect. For a dependable relay of your own, add before the scripts in `index.html`:
+  ```html
+  <script>window.CSR_ICE_SERVERS=[{urls:'stun:stun.l.google.com:19302'},{urls:'turn:YOUR_TURN_HOST:3478',username:'…',credential:'…'}];</script>
+  ```
 - Bots at three levels: **Easy** (loose, makes mistakes), **Normal** (greedy one-turn heuristic), **Hard** (searches two of its own turns ahead; wins ~9 in 10 against Normal).
+- Hints: point cards that are one play away are marked, and the hand card that gets you there shows the points it unlocks. Press and hold (touch), hover, or right-click any card to zoom in with a plain-language caption.
+- End of game: a points-over-turns timeline with hover details, plus per-player stats (claims, best card, best trade, acquisitions, rests).
 - Animated table: cards slide from the decks and between market, hand and played pile; cubes and coins fly between caravans, cards and piles. Respects `prefers-reduced-motion`.
 - No build step, no backend: open `index.html` in a browser (online play needs an internet connection for signaling).
 

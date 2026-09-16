@@ -15,7 +15,10 @@ const NET={mode:'local',role:null,peer:null,host:null,conns:new Map(),code:null,
    ================================================================ */
 const ROOM_PREFIX='csr-v1-';
 // STUN for direct connections, plus a public TURN relay (Open Relay Project) for networks that block peer-to-peer.
-const PEER_CFG={debug:0,config:{iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']},{urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turn:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}]}};
+// To use your own relay (e.g. a Cloudflare or metered.ca TURN account), define window.CSR_ICE_SERVERS
+// before these scripts load — see README — and it replaces the list below.
+const DEFAULT_ICE=[{urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302']},{urls:['turn:openrelay.metered.ca:80','turn:openrelay.metered.ca:443','turn:openrelay.metered.ca:443?transport=tcp'],username:'openrelayproject',credential:'openrelayproject'}];
+const PEER_CFG={debug:0,config:{iceServers:Array.isArray(window.CSR_ICE_SERVERS)&&window.CSR_ICE_SERVERS.length?window.CSR_ICE_SERVERS:DEFAULT_ICE}};
 const CONNECT_TIMEOUT=15000;
 const CODE_CHARS='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const genCode=()=>Array.from({length:5},()=>CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');

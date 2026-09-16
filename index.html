@@ -172,6 +172,25 @@ svg.coin{width:22px;height:22px;vertical-align:middle;display:inline-block}
 select.lvl{font:inherit;padding:5px 8px;border:1px solid var(--parch-line);border-radius:6px;background:#FBF3E0;color:var(--parch-ink)}
 .botadd{display:inline-flex;gap:6px;align-items:center}
 .setup .prow{grid-template-columns:28px 1fr auto auto}
+
+/* ---------- hints, zoom, timeline ---------- */
+.card.near{opacity:1;filter:drop-shadow(0 3px 4px rgba(0,0,0,.55)) drop-shadow(0 0 5px rgba(244,220,140,.45))}
+.card.near svg.face{outline:1px dashed var(--gold2);outline-offset:-3px}
+.card.enables{filter:drop-shadow(0 3px 4px rgba(0,0,0,.55)) drop-shadow(0 0 7px rgba(244,220,140,.7))}
+.card .badge{position:absolute;bottom:-9px;left:50%;transform:translateX(-50%);font-family:Cinzel,serif;font-size:11px;letter-spacing:.06em;background:linear-gradient(180deg,var(--gold2),var(--gold));color:#2B1B12;border-radius:99px;padding:1px 8px;white-space:nowrap;line-height:1.4;font-weight:700}
+#zoom{position:fixed;inset:0;z-index:45;display:none;align-items:center;justify-content:center;gap:22px;padding:20px;background:rgba(10,5,3,.72);cursor:pointer;flex-wrap:wrap}
+#zoom.show{display:flex}
+#zoom .zcard{width:min(330px,70vw);flex:0 0 auto;filter:drop-shadow(0 14px 30px rgba(0,0,0,.7))}
+#zoom .zcard svg{width:100%;height:auto;display:block}
+#zoom .zcap{max-width:300px;color:var(--ink);font-size:17px;line-height:1.45}
+#zoom .zcap .ok{color:var(--ok)}
+#zoom .zhint{margin-top:10px;font-size:13px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.modal.wide{max-width:760px}
+.modal h3{font-family:Marcellus,serif;font-size:17px;margin:16px 0 6px;color:#6B4410;letter-spacing:.04em}
+.tl{position:relative}
+.tl svg{width:100%;height:auto;display:block;overflow:visible}
+.tltip{position:absolute;display:none;background:#2B1B12;color:var(--ink);border:1px solid var(--gold3);border-radius:6px;padding:6px 10px;font-size:13px;line-height:1.5;pointer-events:none;white-space:nowrap}
+.score.stats td:first-child{white-space:nowrap}
 @media (max-width:520px){:root{--cw:100px}.brand h1{font-size:24px}}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>

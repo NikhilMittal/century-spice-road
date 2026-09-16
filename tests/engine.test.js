@@ -179,6 +179,26 @@ for(const level of ['easy','normal','hard']){
     }
   });
 }
+// ---------- history & hints
+test('every action is recorded with scores for the timeline',()=>{
+  const G=makeGame(humans(2),rng(1));const c=handOf(G,0,'spice');
+  ok(G,0,{k:'spice',id:c.id});ok(G,1,{k:'rest'});
+  assert.equal(G.history.length,2);
+  assert.deepEqual(G.history[0],{t:1,seat:0,k:'spice',d:2,s:[0,0]});
+  assert.equal(G.history[1].k,'rest');assert.equal(G.history[1].t,2);
+  G.players[0].caravan=G.pmarket[0].cost.slice();const pts=G.pmarket[0].pts;ok(G,0,{k:'claim',idx:0});
+  const h=G.history[2];assert.equal(h.k,'claim');assert.equal(h.d,pts);assert.equal(h.s[0],pts+3);
+});
+test('reachable lists point cards one play away, not ones already affordable',()=>{
+  const G=makeGame(humans(2),rng(3));const p=G.players[0];
+  // engineer: a 2Y+2R card on the market, caravan 2Y, and a trade card 2Y -> 2R would not do it; a spice YYRR card would
+  G.pmarket[0]={id:'x',cost:[2,2,0,0],pts:6};G.pmarket[1]={id:'y',cost:[2,0,0,0],pts:8};
+  p.caravan=[2,0,0,0];p.hand=[{id:'g',type:'spice',gain:[0,2,0,0]},{id:'u',type:'upgrade',n:2}];
+  const r=Engine.reachable(G,0);
+  assert.ok(r.some(x=>x.idx===0&&x.action.k==='spice'),'spice card should reach card 0');
+  assert.ok(!r.some(x=>x.idx===1),'card 1 is already affordable so not listed');
+  assert.ok(!r.some(x=>x.idx===0&&x.action.k==='upgrade'),'upgrading the two yellows loses the 2Y needed');
+});
 test('hard bot does not lose to normal bot on average (head-to-head)',()=>{
   const r=rng(99);let hardWins=0,N=16;
   for(let g=0;g<N;g++){const hardSeat=g%2;

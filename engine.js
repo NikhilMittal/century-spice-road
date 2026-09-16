@@ -61,7 +61,7 @@ function makeGame(cfg,rng){
   if(n<2||n>5)throw new Error('2–5 players');
   const G={players:cfg.players.map((p,i)=>({name:p.name,ai:!!p.ai,level:p.level||'normal',owner:p.ai?'bot':(p.owner||'local'),online:p.ai?true:(p.online!==false),
       hand:[{id:'s'+i+'a',type:'spice',gain:[2,0,0,0],starter:true},{id:'s'+i+'b',type:'upgrade',n:2,starter:true}],played:[],caravan:START_CUBES[i].slice(),points:[],gold:0,silver:0})),
-    mdeck:buildMerchantDeck(rng),market:[],pdeck:buildPointDeck(rng),pmarket:[],gold:n*2,silver:n*2,cur:0,phase:'play',endTriggered:false,over:false,target:n<=3?6:5,turn:1,log:[],round:1,online:!!cfg.online};
+    mdeck:buildMerchantDeck(rng),market:[],pdeck:buildPointDeck(rng),pmarket:[],gold:n*2,silver:n*2,cur:0,phase:'play',endTriggered:false,over:false,target:n<=3?6:5,turn:1,log:[],history:[],round:1,online:!!cfg.online};
   for(let i=0;i<6;i++)G.market.push({card:G.mdeck.pop(),cubes:[0,0,0,0]});
   for(let i=0;i<5;i++)G.pmarket.push(G.pdeck.pop());
   log(G,`New game — ${n} players. The game ends the round someone claims their ${G.target}th point card.`);
@@ -125,7 +125,31 @@ function applyAction(G,seat,a){
     case 'rest':doRest(G,p);break;
     default:return 'Unknown action.';
   }
+  record(G,seat,a,card);
   endTurn(G);return null;
+}
+// One line per completed action, for the end-of-game timeline: turn, seat, kind, a number that
+// summarises it (points claimed, value gained by a trade, cost of an acquire) and everyone's score after it.
+function record(G,seat,a,card){
+  if(!G.history)G.history=[];
+  let d=0;
+  if(a.k==='claim')d=G.players[seat].points[G.players[seat].points.length-1].pts;
+  else if(a.k==='trade')d=(value(card.out)-value(card.inp))*(a.times|0);
+  else if(a.k==='spice')d=value(card.gain);
+  else if(a.k==='acquire')d=a.idx|0;
+  G.history.push({t:G.turn,seat,k:a.k,d,s:G.players.map(score)});
+  if(G.history.length>400)G.history.shift();
+}
+/* Point cards this seat could afford after exactly one play from their hand.
+   Returns [{idx, action}] — idx into G.pmarket, action the play that gets there.
+   Cards already affordable are not listed. */
+function reachable(G,seat){
+  const out=[];if(!G||G.over||G.phase!=='play')return out;
+  const p=G.players[seat];
+  const plays=legalActions(G,seat).filter(a=>a.k==='spice'||a.k==='trade'||a.k==='upgrade');
+  for(const a of plays){const H=simulate(G,seat,a);if(!H)continue;const c=H.players[seat].caravan;
+    G.pmarket.forEach((pc,idx)=>{if(!canAfford(p.caravan,pc.cost)&&canAfford(c,pc.cost))out.push({idx,action:a})})}
+  return out;
 }
 
 /* ================================================================
@@ -214,6 +238,6 @@ function aiChoose(G,seat,level,rng){
 const Engine={SP,SPNAME,VAL,TRADES,GAINS,POINTS,START_CUBES,CARAVAN_MAX,
   total,value,canAfford,tradeMax,cheapest,trimTo10,cubesTxt,cardTxt,clone,
   makeGame,applyAction,legalActions,coinForSlot,score,ranking,log,
-  aiChoose,evalState,simulate,greedyOptions};
+  aiChoose,evalState,simulate,greedyOptions,reachable};
 if(typeof module!=='undefined'&&module.exports)module.exports=Engine;else root.Engine=Engine;
 })(typeof window!=='undefined'?window:globalThis);
